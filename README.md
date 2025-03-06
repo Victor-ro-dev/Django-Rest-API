@@ -1,7 +1,7 @@
 # 📌 Aprendizado em Django REST Framework (DRF)
 
 ## 🚀 Sobre o Projeto
-Este repositório documenta minha jornada de aprendizado no Django REST Framework (DRF), explorando conceitos essenciais para a criação de APIs robustas e escaláveis.
+Este repositório documenta minha jornada de aprendizado no Django REST Framework (DRF) seguindo as experiências do professor Mateus Schwede do canal *UB Social*, explorando conceitos essenciais para a criação de APIs robustas e escaláveis.
 
 ## 📚 Conteúdo
 
@@ -26,4 +26,3 @@ Este repositório documenta minha jornada de aprendizado no Django REST Framewor
 - 🐍 Python
 - 🎭 Django
 - ⚙️ Django REST Framework
--
