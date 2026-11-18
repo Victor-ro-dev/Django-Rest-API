@@ -9,7 +9,17 @@ import type {
 } from '../types/api';
 
 const TOKEN_STORAGE_KEY = 'escola_api_token';
-const API_BASE = '/api/v2';
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v2';
+
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
 
 export function getStoredToken(): string | null {
   return localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -21,6 +31,22 @@ export function setStoredToken(token: string | null): void {
   } else {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
   }
+}
+
+function extractErrorMessage(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const record = data as Record<string, unknown>;
+  if (typeof record.detail === 'string') return record.detail;
+
+  const messages: string[] = [];
+  for (const [field, value] of Object.entries(record)) {
+    if (Array.isArray(value)) {
+      messages.push(`${field}: ${value.join(', ')}`);
+    } else if (typeof value === 'string') {
+      messages.push(`${field}: ${value}`);
+    }
+  }
+  return messages.length > 0 ? messages.join(' | ') : null;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -45,26 +71,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const message = extractErrorMessage(data) || `Erro HTTP ${response.status}`;
-    throw new Error(message);
+    throw new ApiError(message, response.status);
   }
 
   return data as T;
 }
 
-function extractErrorMessage(data: unknown): string | null {
-  if (!data || typeof data !== 'object') return null;
-  const record = data as Record<string, unknown>;
-  if (typeof record.detail === 'string') return record.detail;
-
-  const messages: string[] = [];
-  for (const [field, value] of Object.entries(record)) {
-    if (Array.isArray(value)) {
-      messages.push(`${field}: ${value.join(', ')}`);
-    } else if (typeof value === 'string') {
-      messages.push(`${field}: ${value}`);
-    }
-  }
-  return messages.length > 0 ? messages.join(' | ') : null;
+export interface ListCursosParams {
+  page?: number;
+  search?: string;
+  ordering?: string;
+  signal?: AbortSignal;
 }
 
 export const api = {
@@ -81,16 +98,16 @@ export const api = {
       body: JSON.stringify({ username, email, password }),
     }),
 
-  me: () => request<User>('/auth/me/'),
+  me: (signal?: AbortSignal) => request<User>('/auth/me/', { signal }),
 
   // Cursos
-  listCursos: (params: { page?: number; search?: string; ordering?: string } = {}) => {
+  listCursos: ({ page, search, ordering, signal }: ListCursosParams = {}) => {
     const query = new URLSearchParams();
-    if (params.page) query.set('page', String(params.page));
-    if (params.search) query.set('search', params.search);
-    if (params.ordering) query.set('ordering', params.ordering);
+    if (page) query.set('page', String(page));
+    if (search) query.set('search', search);
+    if (ordering) query.set('ordering', ordering);
     const qs = query.toString();
-    return request<PaginatedResponse<Curso>>(`/cursos/${qs ? `?${qs}` : ''}`);
+    return request<PaginatedResponse<Curso>>(`/cursos/${qs ? `?${qs}` : ''}`, { signal });
   },
 
   createCurso: (payload: CursoPayload) =>
@@ -111,8 +128,10 @@ export const api = {
     }),
 
   // Avaliações
-  listCursoAvaliacoes: (cursoId: number, page = 1) =>
-    request<PaginatedResponse<Avaliacao>>(`/cursos/${cursoId}/avaliacoes/?page=${page}`),
+  listCursoAvaliacoes: (cursoId: number, page = 1, signal?: AbortSignal) =>
+    request<PaginatedResponse<Avaliacao>>(`/cursos/${cursoId}/avaliacoes/?page=${page}`, {
+      signal,
+    }),
 
   createAvaliacao: (payload: AvaliacaoPayload) =>
     request<Avaliacao>('/avaliacoes/', {
