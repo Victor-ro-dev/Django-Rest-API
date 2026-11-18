@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Star } from 'lucide-react';
 
 interface StarRatingProps {
@@ -5,7 +6,7 @@ interface StarRatingProps {
   size?: 'sm' | 'md';
 }
 
-export function StarRating({ value, size = 'sm' }: StarRatingProps) {
+export const StarRating = memo(function StarRating({ value, size = 'sm' }: StarRatingProps) {
   const iconClass = size === 'sm' ? 'h-4 w-4' : 'h-5 w-5';
 
   return (
@@ -30,4 +31,4 @@ export function StarRating({ value, size = 'sm' }: StarRatingProps) {
       })}
     </div>
   );
-}
+});
