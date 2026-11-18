@@ -1,14 +1,18 @@
-from rest_framework import serializers
-from .models import Curso, Avaliacao
+from django.contrib.auth.models import User
 from django.db.models import Avg
+from rest_framework import serializers
+
+from .models import Avaliacao, Curso
+
 
 class AvaliacaoSerializer(serializers.ModelSerializer):
+    """Serializer para avaliações de cursos, com validação de nota entre 1.0 e 5.0."""
 
     class Meta:
-        extra_kwargs = {
-            'email': {'write_only': True}
-        }
         model = Avaliacao
+        extra_kwargs = {
+            'email': {'write_only': True},
+        }
         fields = (
             'id',
             'curso',
@@ -17,30 +21,22 @@ class AvaliacaoSerializer(serializers.ModelSerializer):
             'comentario',
             'avaliacao',
             'criacao',
-            'ativo'
+            'ativo',
         )
-    
-    # Validação (validate_campoValidacao):
+
     def validate_avaliacao(self, valor):
-        if valor in range(1,6):
+        if 1 <= valor <= 5:
             return valor
-        raise serializers.ValidationError('A avaliação precisa ser entre 1 e 5')
+        raise serializers.ValidationError('A avaliação precisa ser entre 1 e 5.')
+
 
 class CursoSerializer(serializers.ModelSerializer):
-    
-    # 1.Nested Relationship:
-    #avaliacoes = AvaliacaoSerializer(many=True, read_only=True)
-    
-    # 2.HyperLinked Related Field:
-    #(nomeRota-função), pois endpoint será gerado automaticamente via ViewSet e Router
-    #avaliacoes = serializers.HyperlinkedRelatedField(many=True, read_only=True, view_name='avaliacao-detail')
+    """Serializer para cursos com média e contagem de avaliações."""
 
-    # 3.Primary Key Related Field:
     avaliacoes = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
-    
-    # Validação dados serializers:
     media_avaliacoes = serializers.SerializerMethodField()
-    
+    total_avaliacoes = serializers.SerializerMethodField()
+
     class Meta:
         model = Curso
         fields = (
@@ -50,11 +46,45 @@ class CursoSerializer(serializers.ModelSerializer):
             'criacao',
             'ativo',
             'avaliacoes',
-            'media_avaliacoes'
+            'media_avaliacoes',
+            'total_avaliacoes',
         )
-    
-    def get_media_avaliacoes(self, obj): #get_nomeAtributoAtualizante
-        media = obj.avaliacoes.aggregate(Avg('avaliacao')).get('avaliacao__avg') #avaliacoes vem de related_name model Curso
+
+    def get_media_avaliacoes(self, obj):
+        media = getattr(obj, 'media_avaliacoes_avg', None)
+        if media is None and not hasattr(obj, 'media_avaliacoes_avg'):
+            media = obj.avaliacoes.aggregate(Avg('avaliacao')).get('avaliacao__avg')
         if media is None:
             return 0
-        return round(media*2) / 2
+        return round(float(media) * 2) / 2
+
+    def get_total_avaliacoes(self, obj):
+        total = getattr(obj, 'total_avaliacoes_count', None)
+        if total is None:
+            return obj.avaliacoes.count()
+        return total
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """Serializer público dos dados básicos do usuário autenticado."""
+
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'is_superuser')
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    """Serializer para registro de novos usuários."""
+
+    password = serializers.CharField(write_only=True, min_length=6)
+
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'password')
+
+    def create(self, validated_data):
+        return User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email', ''),
+            password=validated_data['password'],
+        )
