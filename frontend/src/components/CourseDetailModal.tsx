@@ -34,6 +34,7 @@ export function CourseDetailModal({
   const [hasNext, setHasNext] = useState(false);
   const [hasPrev, setHasPrev] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const [nome, setNome] = useState(user?.username ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
@@ -42,24 +43,40 @@ export function CourseDetailModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAvaliacoes = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.listCursoAvaliacoes(curso.id, page);
-      setAvaliacoes(data.results);
-      setTotal(data.count);
-      setHasNext(Boolean(data.next));
-      setHasPrev(Boolean(data.previous));
-    } catch {
-      setAvaliacoes([]);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
     }
-  }, [curso.id, page]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   useEffect(() => {
-    fetchAvaliacoes();
-  }, [fetchAvaliacoes]);
+    const controller = new AbortController();
+    setLoading(true);
+
+    api
+      .listCursoAvaliacoes(curso.id, page, controller.signal)
+      .then((data) => {
+        setAvaliacoes(data.results);
+        setTotal(data.count);
+        setHasNext(Boolean(data.next));
+        setHasPrev(Boolean(data.previous));
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setAvaliacoes([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [curso.id, page, refreshTick]);
+
+  const reloadReviews = useCallback(() => {
+    setRefreshTick((t) => t + 1);
+  }, []);
 
   async function handleCreateReview(e: React.FormEvent) {
     e.preventDefault();
@@ -80,7 +97,7 @@ export function CourseDetailModal({
       });
       setComentario('');
       setPage(1);
-      await fetchAvaliacoes();
+      reloadReviews();
       onReviewChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao enviar avaliação.');
@@ -92,7 +109,7 @@ export function CourseDetailModal({
   async function handleDeleteReview(id: number) {
     try {
       await api.deleteAvaliacao(id);
-      await fetchAvaliacoes();
+      reloadReviews();
       onReviewChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao excluir avaliação.');
@@ -100,7 +117,12 @@ export function CourseDetailModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Avaliações de ${curso.titulo}`}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+    >
       <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
         <div className="flex items-start justify-between border-b border-slate-800 p-6">
           <div>
@@ -124,6 +146,7 @@ export function CourseDetailModal({
           </div>
           <button
             onClick={onClose}
+            aria-label="Fechar modal"
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-white"
           >
             <X className="h-5 w-5" />

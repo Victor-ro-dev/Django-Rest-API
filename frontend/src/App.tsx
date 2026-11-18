@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useMemo, useState } from 'react';
 import {
   BookOpen,
   ChevronLeft,
@@ -7,113 +7,83 @@ import {
   GraduationCap,
   LogIn,
   LogOut,
-  MessageSquare,
-  Pencil,
   Plus,
   Search,
   ShieldCheck,
-  Trash2,
 } from 'lucide-react';
-import { AuthModal } from './components/AuthModal';
-import { CourseDetailModal } from './components/CourseDetailModal';
-import { CourseFormModal } from './components/CourseFormModal';
+import { CourseCard } from './components/CourseCard';
 import { StarRating } from './components/StarRating';
-import { api, getStoredToken, setStoredToken } from './services/api';
-import type { Curso, User } from './types/api';
+import { useAuth } from './hooks/useAuth';
+import { useCursos } from './hooks/useCursos';
+import { useDebounce } from './hooks/useDebounce';
+import { api } from './services/api';
+import type { Curso } from './types/api';
+
+const AuthModal = lazy(() =>
+  import('./components/AuthModal').then((m) => ({ default: m.AuthModal })),
+);
+const CourseFormModal = lazy(() =>
+  import('./components/CourseFormModal').then((m) => ({ default: m.CourseFormModal })),
+);
+const CourseDetailModal = lazy(() =>
+  import('./components/CourseDetailModal').then((m) => ({ default: m.CourseDetailModal })),
+);
 
 export function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [cursos, setCursos] = useState<Curso[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const { user, setUser, logout } = useAuth();
+
   const [page, setPage] = useState(1);
-  const [hasNext, setHasNext] = useState(false);
-  const [hasPrev, setHasPrev] = useState(false);
-
   const [searchInput, setSearchInput] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
   const [ordering, setOrdering] = useState('id');
+  const debouncedSearch = useDebounce(searchInput.trim(), 300);
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { cursos, totalCount, hasNext, hasPrev, loading, error, refetch } = useCursos({
+    page,
+    search: debouncedSearch,
+    ordering,
+  });
 
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [editingCurso, setEditingCurso] = useState<Curso | null | undefined>(undefined);
-  const [selectedCurso, setSelectedCurso] = useState<Curso | null>(null);
+  const [selectedCursoId, setSelectedCursoId] = useState<number | null>(null);
 
-  useEffect(() => {
-    const token = getStoredToken();
-    if (!token) return;
-    api
-      .me()
-      .then(setUser)
-      .catch(() => {
-        setStoredToken(null);
-        setUser(null);
-      });
+  const selectedCurso = useMemo(
+    () => cursos.find((c) => c.id === selectedCursoId) ?? null,
+    [cursos, selectedCursoId],
+  );
+
+  const avgGeral = useMemo(() => {
+    if (cursos.length === 0) return 0;
+    return cursos.reduce((acc, c) => acc + c.media_avaliacoes, 0) / cursos.length;
+  }, [cursos]);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setPage(1);
+    setSearchInput(value);
   }, []);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setPage(1);
-      setSearchQuery(searchInput.trim());
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
+  const handleSelectCurso = useCallback((curso: Curso) => {
+    setSelectedCursoId(curso.id);
+  }, []);
 
-  const fetchCursos = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.listCursos({
-        page,
-        search: searchQuery || undefined,
-        ordering,
-      });
-      setCursos(data.results);
-      setTotalCount(data.count);
-      setHasNext(Boolean(data.next));
-      setHasPrev(Boolean(data.previous));
+  const handleEditCurso = useCallback((curso: Curso) => {
+    setEditingCurso(curso);
+  }, []);
 
-      if (selectedCurso) {
-        const updated = data.results.find((c) => c.id === selectedCurso.id);
-        if (updated) setSelectedCurso(updated);
+  const handleDeleteCurso = useCallback(
+    async (curso: Curso) => {
+      if (!window.confirm(`Deseja realmente excluir o curso "${curso.titulo}"?`)) {
+        return;
       }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Não foi possível conectar à API Django.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [page, searchQuery, ordering, selectedCurso]);
-
-  useEffect(() => {
-    fetchCursos();
-  }, [page, searchQuery, ordering]);
-
-  function handleLogout() {
-    setStoredToken(null);
-    setUser(null);
-  }
-
-  async function handleDeleteCurso(curso: Curso) {
-    if (!window.confirm(`Deseja realmente excluir o curso "${curso.titulo}"?`)) {
-      return;
-    }
-    try {
-      await api.deleteCurso(curso.id);
-      await fetchCursos();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erro ao excluir curso.');
-    }
-  }
-
-  const avgGeral =
-    cursos.length > 0
-      ? cursos.reduce((acc, c) => acc + c.media_avaliacoes, 0) / cursos.length
-      : 0;
+      try {
+        await api.deleteCurso(curso.id);
+        refetch();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Erro ao excluir curso.');
+      }
+    },
+    [refetch],
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -125,9 +95,7 @@ export function App() {
               <GraduationCap className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight text-white">
-                Escola API
-              </h1>
+              <h1 className="text-lg font-bold tracking-tight text-white">Escola API</h1>
               <p className="text-xs text-slate-400">
                 Catálogo de Cursos & Avaliações (DRF + React)
               </p>
@@ -156,7 +124,7 @@ export function App() {
                   <span className="font-medium text-slate-200">{user.username}</span>
                 </div>
                 <button
-                  onClick={handleLogout}
+                  onClick={logout}
                   title="Sair"
                   className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-rose-500/40 hover:text-rose-300"
                 >
@@ -191,9 +159,7 @@ export function App() {
               Média da Página
             </p>
             <div className="mt-2 flex items-center gap-2.5">
-              <span className="text-3xl font-bold text-white">
-                {avgGeral.toFixed(1)}
-              </span>
+              <span className="text-3xl font-bold text-white">{avgGeral.toFixed(1)}</span>
               <StarRating value={avgGeral} size="md" />
             </div>
           </div>
@@ -219,7 +185,7 @@ export function App() {
               <input
                 type="text"
                 value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Buscar cursos por título ou URL..."
                 className="w-full rounded-xl border border-slate-800 bg-slate-900 py-2.5 pr-4 pl-10 text-sm text-white placeholder-slate-500 outline-none transition focus:border-indigo-500"
               />
@@ -231,6 +197,7 @@ export function App() {
                 setPage(1);
                 setOrdering(e.target.value);
               }}
+              aria-label="Ordenar cursos"
               className="rounded-xl border border-slate-800 bg-slate-900 px-3.5 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
             >
               <option value="id">Mais antigos</option>
@@ -252,8 +219,11 @@ export function App() {
         {/* Erro */}
         {error && (
           <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
-            <strong>Erro:</strong> {error}. Verifique se o servidor Django está rodando
-            em <code className="rounded bg-rose-950/60 px-1.5 py-0.5">http://127.0.0.1:8000</code>.
+            <strong>Erro:</strong> {error}. Verifique se o servidor Django está rodando em{' '}
+            <code className="rounded bg-rose-950/60 px-1.5 py-0.5">
+              http://127.0.0.1:8000
+            </code>
+            .
           </div>
         )}
 
@@ -274,7 +244,7 @@ export function App() {
               Nenhum curso encontrado
             </h2>
             <p className="mt-1 text-sm text-slate-400">
-              {searchQuery
+              {debouncedSearch
                 ? 'Tente outro termo na busca.'
                 : 'Cadastre o primeiro curso para começar.'}
             </p>
@@ -282,84 +252,14 @@ export function App() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cursos.map((curso) => (
-              <article
+              <CourseCard
                 key={curso.id}
-                className="flex flex-col justify-between rounded-2xl border border-slate-800 bg-slate-900/70 p-5 transition hover:border-slate-700"
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-2">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
-                        curso.ativo
-                          ? 'bg-emerald-500/10 text-emerald-400'
-                          : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {curso.ativo ? 'Ativo' : 'Inativo'}
-                    </span>
-                    <span className="text-xs text-slate-500">#{curso.id}</span>
-                  </div>
-
-                  <h3 className="mt-3 line-clamp-2 text-lg font-semibold text-white">
-                    {curso.titulo}
-                  </h3>
-
-                  <a
-                    href={curso.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1.5 inline-flex max-w-full items-center gap-1 truncate text-xs text-indigo-400 hover:text-indigo-300"
-                  >
-                    <span className="truncate">{curso.url}</span>
-                    <ExternalLink className="h-3 w-3 shrink-0" />
-                  </a>
-                </div>
-
-                <div className="mt-5 space-y-4 border-t border-slate-800/80 pt-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <StarRating value={curso.media_avaliacoes} />
-                      <span className="text-sm font-semibold text-slate-200">
-                        {curso.media_avaliacoes.toFixed(1)}
-                      </span>
-                    </div>
-                    <span className="text-xs text-slate-400">
-                      {curso.total_avaliacoes}{' '}
-                      {curso.total_avaliacoes === 1 ? 'avaliação' : 'avaliações'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setSelectedCurso(curso)}
-                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-700"
-                    >
-                      <MessageSquare className="h-3.5 w-3.5" />
-                      Ver Avaliações
-                    </button>
-
-                    {user && (
-                      <button
-                        onClick={() => setEditingCurso(curso)}
-                        title="Editar curso"
-                        className="rounded-xl border border-slate-800 p-2 text-slate-400 transition hover:border-indigo-500/40 hover:text-indigo-300"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                    )}
-
-                    {user?.is_superuser && (
-                      <button
-                        onClick={() => handleDeleteCurso(curso)}
-                        title="Excluir curso (somente superusuário)"
-                        className="rounded-xl border border-slate-800 p-2 text-slate-400 transition hover:border-rose-500/40 hover:text-rose-400"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </article>
+                curso={curso}
+                user={user}
+                onSelect={handleSelectCurso}
+                onEdit={handleEditCurso}
+                onDelete={handleDeleteCurso}
+              />
             ))}
           </div>
         )}
@@ -386,31 +286,33 @@ export function App() {
         )}
       </main>
 
-      {/* Modais */}
-      {showAuthModal && (
-        <AuthModal
-          onClose={() => setShowAuthModal(false)}
-          onSuccess={(loggedUser) => setUser(loggedUser)}
-        />
-      )}
+      {/* Modais carregados sob demanda (Code Splitting) */}
+      <Suspense fallback={null}>
+        {showAuthModal && (
+          <AuthModal
+            onClose={() => setShowAuthModal(false)}
+            onSuccess={(loggedUser) => setUser(loggedUser)}
+          />
+        )}
 
-      {editingCurso !== undefined && (
-        <CourseFormModal
-          curso={editingCurso}
-          onClose={() => setEditingCurso(undefined)}
-          onSaved={fetchCursos}
-        />
-      )}
+        {editingCurso !== undefined && (
+          <CourseFormModal
+            curso={editingCurso}
+            onClose={() => setEditingCurso(undefined)}
+            onSaved={refetch}
+          />
+        )}
 
-      {selectedCurso && (
-        <CourseDetailModal
-          curso={selectedCurso}
-          user={user}
-          onClose={() => setSelectedCurso(null)}
-          onReviewChanged={fetchCursos}
-          onRequireAuth={() => setShowAuthModal(true)}
-        />
-      )}
+        {selectedCurso && (
+          <CourseDetailModal
+            curso={selectedCurso}
+            user={user}
+            onClose={() => setSelectedCursoId(null)}
+            onReviewChanged={refetch}
+            onRequireAuth={() => setShowAuthModal(true)}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }
